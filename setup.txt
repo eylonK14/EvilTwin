@@ -1,0 +1,5 @@
+|src MAC|BSSID
+
+
+AP: frame_type == 8 && tds == 0 && fds == 1 --> addr3 + addr2
+AP: frame_type == 8 && tds == 1 && fds == 0 --> addr2 + addr1
