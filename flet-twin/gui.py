@@ -32,6 +32,35 @@ def channel_hopper():
             if stop_sniff.is_set():
                 break
 
+def get_security_algorithm(pkt):
+    """Return the AP's security algorithm (Open, WEP, WPA, WPA2, WPA3) from a beacon packet."""
+    cap_info = pkt.sprintf('{Dot11Beacon:%Dot11Beacon.cap%}').lower()
+    has_privacy = 'privacy' in cap_info
+
+    has_wpa = False
+    has_rsn = False
+    has_wpa3 = False
+
+    elt = pkt.getlayer(Dot11Elt)
+    while elt:
+        if elt.ID == 48:
+            has_rsn = True
+            if b'\x00\x0f\xac\x08' in elt.info:
+                has_wpa3 = True
+        if elt.ID == 221 and elt.info.startswith(b'\x00\x50\xf2\x01'):
+            has_wpa = True
+        elt = elt.payload.getlayer(Dot11Elt)
+
+    if not has_privacy:
+        return 'Open'
+    if has_wpa3:
+        return 'WPA3'
+    if has_rsn:
+        return 'WPA2'
+    if has_wpa:
+        return 'WPA'
+    return 'WEP'
+
 # Packet handler
 def packet_handler(pkt):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -41,7 +70,7 @@ def packet_handler(pkt):
         ssid = pkt[Dot11Elt].info.decode(errors='ignore') if pkt[Dot11Elt].info else '<Hidden>'
         signal = getattr(pkt, 'dBm_AntSignal', None)
         cap = pkt.sprintf('{Dot11Beacon:%Dot11Beacon.cap%}')
-        security = 'Encrypted' if 'privacy' in cap.lower() else 'Open'
+        security = get_security_algorithm(pkt)
         prev = networks.get(bssid)
         if not prev or (signal is not None and (prev['Signal'] is None or signal > prev['Signal'])):
             networks[bssid] = {'SSID': ssid, 'Signal': signal, 'Security': security, 'Channel': ch}
