@@ -3,11 +3,28 @@ from collections import defaultdict
 import threading
 import time
 import sys
+import os
 
 # Global data stores
 networks = {}  # BSSID -> {SSID, Signal, Security}
 clients = defaultdict(lambda: defaultdict(lambda: {'last_seen': None, 'pkt_count': 0}))
 stop_sniff = threading.Event()
+
+ONE_MINUTE_SCAN = 60
+
+def get_channel(pkt):
+    elt = pkt.getlayer(Dot11Elt)
+    while elt:
+        if elt.ID == 3:  # DS Parameter Set (Channel)
+            return int.from_bytes(elt.info, byteorder='little')
+        elt = elt.payload.getlayer(Dot11Elt)
+    return None
+
+def channel_hopper(iface):
+    while True:
+        for ch in range(1, 14):  # Channels 1-13
+            os.system(f"iwconfig {iface} channel {ch}")
+            time.sleep(0.5)
 
 # Sniffer handler
 def packet_handler(pkt):
@@ -20,14 +37,15 @@ def packet_handler(pkt):
         signal = pkt.dBm_AntSignal if hasattr(pkt, 'dBm_AntSignal') else 'N/A' # Signal strength
         cap = pkt.sprintf('{Dot11Beacon:%Dot11Beacon.cap%}')
         security = 'Encrypted' if 'privacy' in cap.lower() else 'Open' # Security type
+        channel = get_channel(pkt)
         prev = networks.get(bssid) # Previous info for this BSSID
         if not prev or (signal != 'N/A' and prev['Signal'] != 'N/A' and signal > prev['Signal']):
-            networks[bssid] = {'SSID': ssid, 'Signal': signal, 'Security': security}
+            networks[bssid] = {'SSID': ssid, 'Signal': signal, 'Security': security, 'Channel': channel}
     # Data frames: track clients under AP
     elif pkt.haslayer(Dot11) and pkt.type == 2:
         fcf = pkt.FCfield # Frame Control Field
-        to_ds = bool(fcf & 0x1) # To DS bit
-        from_ds = bool(fcf & 0x2) # From DS bit
+        to_ds = pkt.FCfield & 0x1 != 0
+        from_ds = pkt.FCfield & 0x2 != 0
         if to_ds and not from_ds and pkt.addr1: # To DS and not From DS then addr1 is BSSID and addr2 is client
             bssid, client = pkt.addr1, pkt.addr2
         elif from_ds and not to_ds and pkt.addr2: # From DS and not To DS then addr2 is BSSID and addr1 is client
@@ -42,6 +60,7 @@ def packet_handler(pkt):
 # Start sniffing thread
 def start_sniff(iface):
     """Starts continuous sniffing in background until stop is signaled."""
+    threading.Thread(target=channel_hopper, args=(iface,), daemon=True).start()
     sniffer = AsyncSniffer(iface=iface, prn=packet_handler, store=False)
     sniffer.start()
     try:
@@ -68,11 +87,11 @@ def select_interface():
 
 # Display functions
 def display_networks():
-    print("\nDiscovered Networks (with client counts):")
-    print(f"{'Index':<6}{'BSSID':<20}{'SSID':<30}{'Signal':<8}{'Sec':<10}{'Clients'}")
+    print("\nDiscovered Networks:")
+    print(f"{'Index':<6}{'BSSID':<20}{'SSID':<30}{'Signal':<8}{'Sec':<10}{'Clients':<10}{'Channel'}")
     for idx, (bssid, det) in enumerate(networks.items()):
         count = len(clients[bssid])
-        print(f"{idx:<6}{bssid:<20}{det['SSID']:<30}{det['Signal']:<8}{det['Security']:<10}{count}")
+        print(f"{idx:<6}{bssid:<20}{det['SSID']:<30}{det['Signal']:<8}{det['Security']:<10}{count:<10}{det['Channel']}")
 
 def display_clients(bssid):
     print(f"\nClients for BSSID {bssid}:")
@@ -88,8 +107,8 @@ def main():
     sniff_thread.start()
 
     # Initial sniffing warm-up
-    warmup = 5  # seconds to gather initial data
-    print(f"Gathering data for {warmup}s before showing menu...")
+    warmup = ONE_MINUTE_SCAN
+    print(f"Gathering initial data...")
     time.sleep(warmup)
 
     try:
@@ -100,8 +119,8 @@ def main():
             if choice == 'q':
                 break
             if choice == 'r':
-                refresh = 5  # seconds to collect more data
-                print(f"Refreshing data for {refresh}s...")
+                refresh = ONE_MINUTE_SCAN
+                print(f"Refreshing...")
                 time.sleep(refresh)
                 continue
             if choice.isdigit() and int(choice) < len(networks):

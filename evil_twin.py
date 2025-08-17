@@ -5,7 +5,7 @@ import os
 import threading
 import time
 
-interface = 'wlan1'
+interface = 'wlxe84e06afb969'
 
 aps = {}       # BSSID: (SSID, Channel)
 stations = {}  # STA MAC: associated BSSID

