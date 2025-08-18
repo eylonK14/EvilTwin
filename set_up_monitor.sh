@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
 
-ifconfig wlxe84e06afb969 down
-iwconfig wlxe84e06afb969 mode Monitor
-ifconfig wlxe84e06afb969 up
+ifconfig $1 down
+iwconfig $1 mode Monitor
+ifconfig $1 up
