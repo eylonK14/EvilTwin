@@ -4,9 +4,9 @@ import subprocess
 import sys
 import time
 import threading
-import network
-import data
-import dauth
+import evil_twin_framework.network as network
+import evil_twin_framework.data as data
+import evil_twin_framework.dauth as dauth
 
 ONE_MINUTE_SCAN = 60
 
@@ -61,7 +61,8 @@ def main():
                         
                         if sub == 'q':
                             network.stop_sniffing()
-                            sniff_thread.join()
+                            if sniff_thread.is_alive():
+                                sniff_thread.join(timeout=2)
                             sys.exit(0)
                             
                         if sub == 'b':
@@ -76,32 +77,39 @@ def main():
                                 # Here you can add deauth attack option
                                 attack_choice = input("\nDo you want to perform deauth attack? (y/n): ").strip().lower()
                                 if attack_choice == 'y':
-                                    duration = input("Enter attack duration in seconds (default 15): ").strip()
-                                    duration = int(duration) if duration.isdigit() else 15
+                                    duration = input("Enter attack duration in seconds (default 30): ").strip()
+                                    duration = int(duration) if duration.isdigit() else 30
                                     
                                     print("\nStarting deauth attack...")
                                     dauth.start_attack(client_mac, target_bssid, iface, duration)
                                     
-                                    # Wait for attack to complete or allow stopping
+                                    # Wait for attack to complete
                                     while dauth.is_attack_running():
-                                        stop = input("Press 's' to stop attack early, or wait... ").strip().lower()
-                                        if stop == 's':
-                                            dauth.stop_attack()
-                                            break
-                                        time.sleep(1)
+                                        time.sleep(0.5)
+                                    
+                                    print("\nAttack completed!")
                                 
-                                network.stop_sniffing()
-                                sniff_thread.join()
-                                sys.exit(0)
+                                # After attack or if user chose 'n'
+                                next_action = input("\nWhat next? 'c' to continue scanning, 'q' to quit: ").strip().lower()
+                                if next_action == 'q':
+                                    network.stop_sniffing()
+                                    if sniff_thread.is_alive():
+                                        sniff_thread.join(timeout=2)
+                                    sys.exit(0)
+                                # If 'c' or anything else, continue scanning
             else:
                 print("Invalid choice.")
                 
     except KeyboardInterrupt:
         pass
     finally:
+        print("\nExiting...")
+        if dauth.is_attack_running():
+            dauth.stop_attack()
         network.stop_sniffing()
-        sniff_thread.join()
-        print("\nExiting.")
+        if sniff_thread.is_alive():
+            sniff_thread.join(timeout=2)
+        print("Cleanup complete.")
 
 if __name__ == '__main__':
     main()
