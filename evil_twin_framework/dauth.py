@@ -78,7 +78,7 @@ def deauth_attack(target_mac, ap_bssid, interface, attack_duration=30):
     
     print(f"\n[COMPLETE] Deauth attack finished. Sent {packets_sent} packets")
 
-def start_attack(target_mac, ap_bssid, interface, attack_duration=30):
+def start_attack(target_mac, ap_bssid, interface, attack_duration=60):
     """
     Start deauth attack in separate thread
     Args:
