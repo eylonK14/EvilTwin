@@ -1,20 +1,24 @@
 #!/bin/bash
 
 # Teardown Access Point and Restore System Script
-# Usage: ./teardown_ap.sh
+# Usage: ./teardown_ap.sh [interface]
+
+# Optional: specify which interface to reset (default: wlan0)
+AP_INTERFACE=${1:-wlan0}
 
 echo "[*] Stopping Access Point and restoring system..."
 
 # Stop services
 echo "[*] Stopping AP services..."
-service hostapd stop 2>/dev/null
-service dnsmasq stop 2>/dev/null
 killall hostapd 2>/dev/null
 killall dnsmasq 2>/dev/null
 
 # Stop any Python HTTP servers on port 80
 echo "[*] Stopping web server..."
 fuser -k 80/tcp 2>/dev/null
+
+# Small delay to ensure services are stopped
+sleep 0.5
 
 # Clear iptables rules
 echo "[*] Clearing firewall rules..."
@@ -30,43 +34,32 @@ iptables -P OUTPUT ACCEPT
 echo "[*] Disabling IP forwarding..."
 echo 0 > /proc/sys/net/ipv4/ip_forward
 
-# Reset all wireless interfaces
-echo "[*] Resetting wireless interfaces..."
-for interface in $(ls /sys/class/net | grep -E '^wl'); do
-    echo "  - Resetting $interface"
-    ip link set $interface down 2>/dev/null
-    ip addr flush dev $interface 2>/dev/null
-    iw dev $interface set type managed 2>/dev/null
-    ip link set $interface up 2>/dev/null
-done
+# Reset ONLY the AP interface (don't touch monitoring interface!)
+echo "[*] Resetting AP interface $AP_INTERFACE..."
+ip link set $AP_INTERFACE down 2>/dev/null
+ip addr flush dev $AP_INTERFACE 2>/dev/null
+iw dev $AP_INTERFACE set type managed 2>/dev/null
+ip link set $AP_INTERFACE up 2>/dev/null
+
+# Return interface to NetworkManager control
+nmcli device set $AP_INTERFACE managed yes 2>/dev/null
 
 # Restart network services
 echo "[*] Restarting network services..."
-systemctl enable systemd-resolved 2>/dev/null
 systemctl start systemd-resolved 2>/dev/null
-systemctl enable NetworkManager 2>/dev/null
-systemctl start NetworkManager 2>/dev/null
-service network-manager start 2>/dev/null
-systemctl enable wpa_supplicant 2>/dev/null
-systemctl start wpa_supplicant 2>/dev/null
+systemctl restart NetworkManager 2>/dev/null
 
 # Clean temporary files
 echo "[*] Cleaning temporary files..."
 rm -f /tmp/hostapd_runtime.conf 2>/dev/null
 rm -f /tmp/dnsmasq_runtime.conf 2>/dev/null
-rm -f /tmp/evil_twin* 2>/dev/null
-rm -f /tmp/captive* 2>/dev/null
 
 # Wait for services to stabilize
-sleep 3
-
-# Restart NetworkManager again to ensure all interfaces are managed
-echo "[*] Finalizing network restoration..."
-systemctl restart NetworkManager 2>/dev/null
+sleep 2
 
 echo "[✓] System restored to normal!"
 echo ""
-echo "If WiFi is not working properly:"
-echo "  1. Try: nmcli radio wifi on"
+echo "If WiFi is not working properly on $AP_INTERFACE:"
+echo "  1. Try: nmcli device set $AP_INTERFACE managed yes"
 echo "  2. Or: sudo systemctl restart NetworkManager"
-echo "  3. Or reboot the system"
+echo "  3. Or: sudo ifconfig $AP_INTERFACE up"

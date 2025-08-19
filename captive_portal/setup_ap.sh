@@ -14,18 +14,28 @@ fi
 
 echo "[*] Setting up AP on $INTERFACE with SSID '$SSID' on channel $CHANNEL"
 
-# Stop network manager to prevent interference
-echo "[*] Stopping network services..."
-service network-manager stop 2>/dev/null
-service NetworkManager stop 2>/dev/null
-systemctl stop systemd-resolved 2>/dev/null
+# Stop channel hopping on monitoring interface first
+echo "[*] Stopping any channel hopping..."
+pkill -f "iwconfig.*channel" 2>/dev/null
 
-# Kill any existing instances
-killall hostapd 2>/dev/null
-killall dnsmasq 2>/dev/null
+# Only stop NetworkManager's control of the AP interface
+echo "[*] Releasing $INTERFACE from NetworkManager..."
+nmcli device set $INTERFACE managed no 2>/dev/null
+
+# Stop services that might interfere with AP
+echo "[*] Stopping conflicting services..."
+systemctl stop systemd-resolved 2>/dev/null
 killall wpa_supplicant 2>/dev/null
 
-# Configure the interface
+# Kill any existing AP services
+killall hostapd 2>/dev/null
+killall dnsmasq 2>/dev/null
+
+# Make sure the AP interface is not in monitor mode
+echo "[*] Ensuring $INTERFACE is in managed mode..."
+iw dev $INTERFACE set type managed 2>/dev/null
+
+# Configure ONLY the AP interface (don't touch other interfaces!)
 echo "[*] Configuring interface $INTERFACE..."
 ip link set $INTERFACE down
 ip addr flush dev $INTERFACE
@@ -77,22 +87,39 @@ listen-address=10.0.0.1
 address=/#/10.0.0.1
 EOF
 
+# Kill anything on port 53 that might conflict
+fuser -k 53/udp 2>/dev/null
+sleep 0.5
+
 # Start DHCP and DNS server
 echo "[*] Starting DHCP/DNS server..."
-dnsmasq -C /tmp/dnsmasq_runtime.conf
+dnsmasq -C /tmp/dnsmasq_runtime.conf &
+DNSMASQ_PID=$!
 
 # Small delay to ensure dnsmasq is ready
 sleep 1
 
+# Check if dnsmasq started successfully
+if ! kill -0 $DNSMASQ_PID 2>/dev/null; then
+    echo "[ERROR] Failed to start dnsmasq"
+    exit 1
+fi
+
 # Start hostapd in background
 echo "[*] Starting hostapd..."
-hostapd /tmp/hostapd_runtime.conf -B
+hostapd /tmp/hostapd_runtime.conf -B &
+HOSTAPD_PID=$!
 
 # Wait for hostapd to initialize
 sleep 2
 
-# Add default route
-route add default gw 10.0.0.1 2>/dev/null
+# Check if hostapd started successfully
+if ! pgrep hostapd > /dev/null; then
+    echo "[ERROR] Failed to start hostapd"
+    kill $DNSMASQ_PID 2>/dev/null
+    exit 1
+fi
 
 echo "[✓] Access Point setup complete!"
 echo "[*] AP '$SSID' is broadcasting on $INTERFACE"
+echo "[*] DHCP server running with PID $DNSMASQ_PID"
