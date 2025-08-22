@@ -165,7 +165,8 @@ def setup_firewall_iptables(ap_network, internet_interface):
     commands = [
         ['sudo', 'iptables', '-t', 'nat', '-A', 'POSTROUTING', '-o', internet_interface, '-j', 'MASQUERADE'],
         ['sudo', 'iptables', '-A', 'FORWARD', '-i', internet_interface, '-o', 'wlan0', '-m', 'state', '--state', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'],
-        ['sudo', 'iptables', '-A', 'FORWARD', '-i', 'wlan0', '-o', internet_interface, '-j', 'ACCEPT']
+        ['sudo', 'iptables', '-A', 'FORWARD', '-i', 'wlan0', '-o', internet_interface, '-j', 'ACCEPT'],
+        ['sudo', 'iptables', '-P', 'FORWARD', 'ACCEPT']
     ]
     
     for cmd in commands:
@@ -175,13 +176,14 @@ def create_dnsmasq_config(ip_address, dns_server='8.8.8.8'):
     """Create dnsmasq configuration"""
     network = '.'.join(ip_address.split('.')[:-1])
     
-    config = f"""domain-needed
-bogus-priv
-filterwin2k
-server={dns_server}
-listen-address={ip_address}
-no-hosts
-dhcp-range={network}.50,{network}.150,12h
+    config = f"""
+no-resolv
+interface=wlan0
+server=8.8.8.8
+listen-address=192.168.0.1
+dhcp-range=192.168.0.2,192.168.0.2,12h
+dhcp-option=6,192.168.0.1
+dhcp-option=3,192.168.0.1
 """
     
     config_file = '/tmp/fake_ap_dnsmasq.conf'
