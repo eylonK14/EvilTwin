@@ -8,55 +8,14 @@ import signal
 import evil_twin_framework.network as network
 import evil_twin_framework.data as data
 import evil_twin_framework.dauth as dauth
-import evil_twin_framework.bash_captive as captive
 
 ONE_MINUTE_SCAN = 60
 
-def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
-    print("\n[!] Caught interrupt signal, cleaning up...")
-    cleanup_and_exit()
 
-def cleanup_and_exit():
-    """Cleanup all resources and exit"""
-    print("\n[*] Performing cleanup...")
-    
-    # Stop any running attacks
-    if dauth.is_attack_running():
-        print("[*] Stopping deauth attack...")
-        dauth.stop_attack()
-    
-    if captive.is_running():
-        print("[*] Stopping Evil Twin...")
-        captive.stop_evil_twin()
-    
-    # Stop network sniffing
-    print("[*] Stopping network monitoring...")
-    network.stop_sniffing()
-    
-    # Wait a moment for threads to clean up
-    time.sleep(1)
-    
-    print("[✓] Cleanup complete. Exiting.")
-    sys.exit(0)
 
 def main():
-    # Register signal handler for graceful exit
-    signal.signal(signal.SIGINT, signal_handler)
-    
     # Select interface for monitoring/scanning/deauth
     iface = network.select_interface()
-    
-    # Check if user selected wlan0 for monitoring
-    if iface == "wlan0":
-        print("\n[WARNING] You selected wlan0 for monitoring.")
-        print("[!] The Evil Twin AP will also use wlan0 (it always does).")
-        print("[!] This means monitoring will be disrupted during Evil Twin attacks.")
-        print("[!] For best results, use a USB WiFi adapter for monitoring.")
-        cont = input("Continue anyway? (y/n): ").strip().lower()
-        if cont != 'y':
-            print("Exiting...")
-            sys.exit(0)
     
     # Set up monitor mode
     print(f"\n[*] Setting up monitor mode on {iface}...")
@@ -133,9 +92,6 @@ def main():
                         
                         data.display_clients(target_bssid, clients)
                         sub = input("\nSelect client index, 'b' to go back, 'q' to quit: ").strip().lower()
-                        
-                        if sub == 'q':
-                            cleanup_and_exit()
                             
                         if sub == 'b':
                             break
