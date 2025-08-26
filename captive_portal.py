@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
 Minimal Captive Portal - Router Firmware Update Style
-Using Python HTTP Server
+Using Python HTTPServer with socket reuse
 """
 
-import http.server
-import socketserver
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import urllib.parse
 from datetime import datetime
 import threading
 import time
 import os
+import socket
 
 # HTML template
 PORTAL_TEMPLATE = """
@@ -170,7 +170,7 @@ PORTAL_TEMPLATE = """
 </html>
 """
 
-class CaptivePortalHandler(http.server.BaseHTTPRequestHandler):
+class CaptivePortalHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Suppress default logging
         pass
@@ -224,16 +224,56 @@ class CaptivePortalHandler(http.server.BaseHTTPRequestHandler):
             self.send_header('Location', '/')
             self.end_headers()
 
-if __name__ == '__main__':
-    PORT = 3000
+
+class ReusableHTTPServer(HTTPServer):
+    allow_reuse_address = True
+    allow_reuse_port = True
     
-    with socketserver.TCPServer(("", PORT), CaptivePortalHandler) as httpd:
-        print("🚀 Captive Portal Running")
-        print(f"📱 http://localhost:{PORT}")
-        print(f"📱 http://192.168.96.184:{PORT}")
+    def server_bind(self):
+        # Set SO_REUSEADDR
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        print(f"SO_REUSEADDR set to: {self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR)}")
         
+        # Set SO_REUSEPORT if available
         try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nServer stopped")
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            print(f"SO_REUSEPORT set to: {self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT)}")
+        except (AttributeError, OSError) as e:
+            print(f"SO_REUSEPORT not available or failed to set: {e}")
+        
+        super().server_bind()
+
+
+def captive_portal(server_ip, port=80):
+    """Run the captive portal with socket reuse options"""
+    
+    print(f"Starting captive portal on {server_ip}:{port}")
+    
+    try:
+        httpd = ReusableHTTPServer((server_ip, port), CaptivePortalHandler)
+        print(f"Successfully bound to {server_ip}:{port}")
+        print("Captive Portal Running")
+        
+        httpd.serve_forever()
+        
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            print(f"Failed to bind to {server_ip}:{port} - Address already in use")
+            print("Another process is using this address:port combination")
+        else:
+            print(f"Failed to bind to {server_ip}:{port} - {e}")
+        raise
+    except KeyboardInterrupt:
+        print("\nServer stopped by user")
+    except Exception as e:
+        print(f"Server error: {e}")
+    finally:
+        print("Cleaning up server...")
+        if 'httpd' in locals():
             httpd.shutdown()
+            httpd.server_close()
+
+
+if __name__ == "__main__":
+    # Example usage
+    captive_portal("192.168.0.1", 8080)
