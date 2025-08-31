@@ -398,11 +398,11 @@ def create_fake_ap(ssid="Free WiFi",
             
             # Check if processes are still running
             if hostapd_process and hostapd_process.poll() is not None:
-                print("\n[ERROR] hostapd stopped unexpectedly")
+                print("\n[INFO] hostapd stopped")
                 break
             
             if dnsmasq_process and dnsmasq_process.poll() is not None:
-                print("\n[ERROR] dnsmasq stopped unexpectedly")
+                print("\n[INFO] dnsmasq stopped")
                 break
                 
     except KeyboardInterrupt:
