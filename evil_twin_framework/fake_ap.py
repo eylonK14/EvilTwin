@@ -8,8 +8,6 @@ import subprocess
 import sys
 import os
 import time
-import signal
-from pathlib import Path
 
 # Global variables for cleanup
 hostapd_process = None
@@ -310,20 +308,8 @@ def get_internet_interface():
     """Try to detect the internet interface"""
     print("[*] Detecting internet interface...")
     
-    # Check default route
-    result = run_command(['ip', 'route', 'show', 'default'], check=False)
-    if result.returncode == 0:
-        for line in result.stdout.split('\n'):
-            if 'default' in line:
-                parts = line.split()
-                for i, part in enumerate(parts):
-                    if part == 'dev' and i+1 < len(parts):
-                        interface = parts[i+1]
-                        print(f"[✓] Found internet interface: {interface}")
-                        return interface
-    
     # Try common interface names
-    common_interfaces = ['eth0', 'eth1', 'enp0s3', 'ens33', 'wlan1']
+    common_interfaces = ['enp2s0', 'eth0', 'eth1', 'enp0s3', 'ens33', 'wlan1']
     for iface in common_interfaces:
         result = run_command(['ip', 'link', 'show', iface], check=False)
         if result.returncode == 0 and 'state UP' in result.stdout:
@@ -331,8 +317,9 @@ def get_internet_interface():
             return iface
     
     # Default fallback
-    print("[!] Could not detect internet interface, using eth0 as default")
-    return 'eth0'
+    print("[!] Could not detect internet interface, using enp2s0 as default")
+    print("[!] Make sure you've connected a LAN cable!")
+    return 'enp2s0'
 
 def create_fake_ap(ssid="Free WiFi", 
                   channel=6, 
@@ -353,10 +340,6 @@ def create_fake_ap(ssid="Free WiFi",
         dhcp_end: End of DHCP range
         internet_interface: Interface with internet (auto-detect if None)
     """
-    
-    # Register signal handler
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
     
     print("\n" + "="*60)
     print("  FAKE ACCESS POINT SETUP")
@@ -407,10 +390,6 @@ def create_fake_ap(ssid="Free WiFi",
     print("\n" + "="*60)
     print(f"[✓] FAKE AP '{ssid}' IS RUNNING!")
     print("="*60)
-    print("\n[!] IMPORTANT: Now run the captive portal in another terminal:")
-    print(f"    sudo python3 captive_portal.py")
-    print("\n[*] The captive portal will handle web requests on {ap_ip}:80")
-    print("[*] Press Ctrl+C to stop the AP\n")
     
     try:
         # Monitor processes

