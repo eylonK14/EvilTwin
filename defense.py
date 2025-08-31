@@ -254,3 +254,6 @@ def defense(interface: str, net: Dict[str, Any], user: str, **kwargs) -> None:
 
 
 __all__ = ["defense", "DefenseConfig"]
+
+if __name__ == "__main__":
+    defense(interface, net, user)
