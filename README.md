@@ -4,7 +4,7 @@ An Implementation of the Evil Twin Attack and a Defense Mechanism
 
 ## Table of Contents
 
-- [Educational Use Only](#️-educational-use-only)
+- [Educational Use Only](#educational-use-only)
 - [Project Overview](#project-overview)
   - [What is an Evil Twin Attack?](#what-is-an-evil-twin-attack)
   - [Defense Mechanism](#defense-mechanism)
@@ -88,11 +88,11 @@ credentials log
 
 ### Recommended Platform: DragonOS
 
-We highly recommend using [DragonOS](https://github.com/DragonOS-Community/DragonOS) for this project. DragonOS is a penetration testing distribution based on Ubuntu that comes pre-installed with all necessary wireless tools and drivers. This will save you significant setup time and ensure compatibility with wireless hardware.
+We highly recommend using [DragonOS](https://github.com/DragonOS-Community/DragonOS) for this project. DragonOS is a penetration testing distribution based on Ubuntu, pre-installed with all necessary wireless tools and drivers. This will save you significant setup time and ensure compatibility with wireless hardware.
 
 ### Hardware Requirements
 - **Two WiFi interfaces REQUIRED**:
-  - Built-in WiFi adapter (for creating fake AP)
+  - Built-in WiFi adapter (for creating a fake AP)
   - External USB WiFi adapter with monitor mode support (for scanning and deauth attacks)
 - **Recommended External Adapter**: EDUP AX3000 USB WiFi Adapter or similar
   - Supports monitor mode and packet injection
@@ -141,17 +141,6 @@ iwconfig
 
 If you only have one built-in WiFi adapter, you MUST purchase an external USB WiFi adapter:
 - **Recommended**: EDUP AX3000 USB WiFi Adapter
-- **Alternative options**: Any USB WiFi adapter that supports monitor mode
-- **Budget option**: TP-Link AC600 T2U Plus
-
-Test monitor mode capability:
-```bash
-# Test your external adapter (assuming it's wlan1)
-sudo airmon-ng check kill
-sudo airmon-ng start wlan1
-iwconfig  # Should show wlan1mon or similar
-sudo airmon-ng stop wlan1mon
-```
 
 ## How to Run
 
