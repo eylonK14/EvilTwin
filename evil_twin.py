@@ -35,6 +35,8 @@ def main():
     sigint = signal.signal(signal.SIGINT, signal_handler)
     sigterm = signal.signal(signal.SIGTERM, signal_handler)
 
+    fake_ap.stop_network_managers()
+
     iface = network.select_interface()
 
     # Set up monitor mode

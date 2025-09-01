@@ -356,8 +356,6 @@ def create_fake_ap(ssid="Free WiFi",
         print("[ERROR] This script must be run as root (use sudo)")
         sys.exit(1)
     
-    # Stop network managers
-    stop_network_managers()
     
     # Setup interface
     setup_interface(ap_interface, ap_ip)
