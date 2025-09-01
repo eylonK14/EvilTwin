@@ -11,7 +11,7 @@ import evil_twin_framework.dauth as dauth
 import evil_twin_framework.fake_ap as fake_ap
 import evil_twin_framework.captive_portal as cp
 
-ONE_MINUTE_SCAN = 10
+ONE_MINUTE_SCAN = 60
 
 
 def cleanup_and_exit():
